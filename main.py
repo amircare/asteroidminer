@@ -9,8 +9,6 @@ import subprocess
 import sys
 
 # ==================== CONSTANTS ====================
-SCREEN_W, SCREEN_H = 1000, 1000
-CX, CY = SCREEN_W // 2, SCREEN_H // 2
 SAVES_DIR = os.path.join(os.path.dirname(__file__), "saves")
 SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "settings.json")
 DEFAULT_PORT = 5555
@@ -24,6 +22,79 @@ STATE_LOAD_WORLD = "load_world"
 STATE_MULTIPLAYER_MENU = "multiplayer_menu"
 STATE_JOIN_GAME = "join_game"
 STATE_HOSTING = "hosting"
+STATE_HOST_WORLD_SELECT = "host_world_select"
+STATE_POWER_SHOP = "power_shop"
+STATE_CONFIRM_EXIT = "confirm_exit"
+
+# Cosmetic unlocks from quests
+SHIP_COSMETICS = {
+    "default": {"name": "Default", "points": [(0, -14), (8.4, 14), (-8.4, 14)]},
+    "arrow": {"name": "Arrow", "points": [(0, -16), (6, -8), (10, 14), (-10, 14), (-6, -8)]},
+    "wide": {"name": "Wide Wing", "points": [(0, -12), (14, 10), (8, 14), (-8, 14), (-14, 10)]},
+    "needle": {"name": "Needle", "points": [(0, -18), (4, 14), (-4, 14)]},
+    "delta": {"name": "Delta", "points": [(0, -14), (12, 8), (6, 14), (-6, 14), (-12, 8)]},
+}
+
+FIRE_COSMETICS = {
+    "default": {"name": "Default Fire", "colors": [(255, 255, 200), (255, 165, 0), (255, 80, 0)]},
+    "blue": {"name": "Blue Flame", "colors": [(200, 220, 255), (100, 150, 255), (50, 100, 255)]},
+    "green": {"name": "Green Plasma", "colors": [(200, 255, 200), (100, 255, 100), (50, 200, 50)]},
+    "purple": {"name": "Purple Energy", "colors": [(255, 200, 255), (200, 100, 255), (150, 50, 255)]},
+    "rainbow": {"name": "Rainbow", "colors": [(255, 200, 200), (200, 255, 200), (200, 200, 255)]},
+}
+
+# Superpower definitions
+SUPERPOWERS = {
+    "damage_orbs": {
+        "name": "Damage Orbs",
+        "description": "Orbs orbit and damage",
+        "base_cost": 500,
+        "max_level": 5,
+        "upgrade_cost_mult": 2.0,
+    },
+    "bullet_split": {
+        "name": "Bullet Split",
+        "description": "Bullets split on hit",
+        "base_cost": 600,
+        "max_level": 3,
+        "upgrade_cost_mult": 2.5,
+    },
+    "auto_aim": {
+        "name": "Auto Aim",
+        "description": "Bullets track asteroids",
+        "base_cost": 800,
+        "max_level": 5,
+        "upgrade_cost_mult": 2.0,
+    },
+    "ultra_fire": {
+        "name": "Ultra Fire",
+        "description": "Extreme fire rate",
+        "base_cost": 700,
+        "max_level": 5,
+        "upgrade_cost_mult": 2.5,
+    },
+    "magnet": {
+        "name": "Loot Magnet",
+        "description": "Auto-collect loot",
+        "base_cost": 550,
+        "max_level": 4,
+        "upgrade_cost_mult": 2.0,
+    },
+    "explosive_shots": {
+        "name": "Explosive Shots",
+        "description": "Bullets explode",
+        "base_cost": 900,
+        "max_level": 4,
+        "upgrade_cost_mult": 2.5,
+    },
+    "piercing_shots": {
+        "name": "Piercing Shots",
+        "description": "Bullets pierce through",
+        "base_cost": 1000,
+        "max_level": 5,
+        "upgrade_cost_mult": 3.0,
+    },
+}
 
 # Ship color presets
 SHIP_COLORS = [
@@ -72,27 +143,30 @@ class Asteroid:
 
 class Quest:
     QUEST_TYPES = [
-        ("destroy_asteroids", "Destroy {target} asteroids", 5, 15),
-        ("destroy_boss", "Destroy {target} boss asteroids", 1, 3),
-        ("destroy_golden", "Destroy {target} golden asteroids", 1, 3),
-        ("collect_iron", "Collect {target} Iron", 5, 15),
-        ("collect_gold", "Collect {target} Gold", 3, 8),
-        ("collect_diamond", "Collect {target} Diamond", 1, 4),
-        ("earn_coins", "Earn {target} coins", 20, 100),
+        ("destroy_asteroids", "Destroy {target} asteroids", 5, 15, "ship"),
+        ("destroy_boss", "Destroy {target} boss asteroids", 1, 3, "fire"),
+        ("destroy_golden", "Destroy {target} golden asteroids", 2, 5, "ship"),
+        ("collect_iron", "Collect {target} Iron", 10, 20, "fire"),
+        ("collect_gold", "Collect {target} Gold", 5, 12, "ship"),
+        ("collect_diamond", "Collect {target} Diamond", 2, 6, "fire"),
+        ("earn_coins", "Earn {target} coins", 50, 200, "ship"),
     ]
 
     def __init__(self, quest_type=None, target=None, progress=0):
         if quest_type is None:
-            qtype, desc_template, min_t, max_t = random.choice(self.QUEST_TYPES)
+            qtype, desc_template, min_t, max_t, reward_type = random.choice(self.QUEST_TYPES)
             self.quest_type = qtype
             self.target = random.randint(min_t, max_t)
             self.description = desc_template.format(target=self.target)
+            self.reward_type = reward_type
         else:
             self.quest_type = quest_type
             self.target = target
-            for qtype, desc_template, _, _ in self.QUEST_TYPES:
+            self.reward_type = "ship"  # Default
+            for qtype, desc_template, _, _, rtype in self.QUEST_TYPES:
                 if qtype == quest_type:
                     self.description = desc_template.format(target=target)
+                    self.reward_type = rtype
                     break
         self.progress = progress
         self.completed = False
@@ -112,13 +186,15 @@ class Quest:
             "quest_type": self.quest_type,
             "target": self.target,
             "progress": self.progress,
-            "completed": self.completed
+            "completed": self.completed,
+            "reward_type": self.reward_type
         }
 
     @staticmethod
     def from_dict(d):
         q = Quest(d["quest_type"], d["target"], d["progress"])
         q.completed = d.get("completed", False)
+        q.reward_type = d.get("reward_type", "ship")
         return q
 
 class Player:
@@ -267,13 +343,23 @@ def save_world(world_name, game_state):
         "cam_vx": game_state["cam_vx"],
         "cam_vy": game_state["cam_vy"],
         "currency": game_state["currency"],
+        "currency_display": game_state.get("currency_display", game_state["currency"]),
         "upgrades": game_state["upgrades"],
         "carried_items": game_state["carried_items"],
+        "floating_loot": game_state.get("floating_loot", []),
         "asteroids": [a.to_dict() for a in game_state["asteroids"]],
         "player_rotation": game_state["player"].rotation,
         "xp": game_state.get("xp", 0),
         "level": game_state.get("level", 1),
         "quests": [q.to_dict() for q in game_state.get("quests", [])],
+        "powers": game_state.get("powers", {"owned": [], "equipped": None, "levels": {}}),
+        "cosmetics": game_state.get("cosmetics", {
+            "unlocked_ships": ["default"],
+            "unlocked_fires": ["default"],
+            "equipped_ship": "default",
+            "equipped_fire": "default",
+        }),
+        "power_shop_materials": game_state.get("power_shop_materials", {"Iron": 0, "Copper": 0, "Titanium": 0, "Uranium": 0, "Power Core": 0}),
     }
     with open(filepath, "w") as f:
         json.dump(data, f, indent=2)
@@ -296,8 +382,10 @@ def create_new_game_state():
         "cam_vx": 0.0,
         "cam_vy": 0.0,
         "currency": 0,
-        "upgrades": {"speed": 0, "storage": 0, "shot_damage": 0, "shoot_speed": 0},
+        "currency_display": 0.0,  # For smooth animation
+        "upgrades": {"speed": 0, "storage": 0, "shot_damage": 0, "shoot_speed": 0, "powers_unlocked": False},
         "carried_items": [],
+        "floating_loot": [],  # Loot items floating in space that can be picked up
         "asteroids": [Asteroid(random.randint(0, 1000), random.randint(0, 1000)) for _ in range(10)],
         "player": Player(500, 500),
         "bullets": [],
@@ -308,6 +396,21 @@ def create_new_game_state():
         "level": 1,
         "quests": [Quest(), Quest(), Quest()],  # Start with 3 random quests
         "gold_particles": [],  # For golden asteroid particle effects
+        "powers": {
+            "owned": [],  # List of owned power IDs
+            "equipped": None,  # Currently equipped power ID
+            "levels": {},  # {power_id: level}
+        },
+        "power_effects": [],  # Active power effects (orbs, shields, etc.)
+        "cosmetics": {
+            "unlocked_ships": ["default"],
+            "unlocked_fires": ["default"],
+            "equipped_ship": "default",
+            "equipped_fire": "default",
+        },
+        "power_shop_materials": {"Iron": 0, "Copper": 0, "Titanium": 0, "Uranium": 0, "Power Core": 0},
+        "coin_animations": [],  # For selling animation
+        "drop_cooldown": 0.0,  # Cooldown to prevent instant pickup after drop
     }
 
 def load_game_state_from_data(data):
@@ -317,8 +420,13 @@ def load_game_state_from_data(data):
     state["cam_vx"] = data["cam_vx"]
     state["cam_vy"] = data["cam_vy"]
     state["currency"] = data["currency"]
+    state["currency_display"] = data.get("currency_display", data["currency"])
     state["upgrades"] = data["upgrades"]
+    # Ensure powers_unlocked exists in upgrades
+    if "powers_unlocked" not in state["upgrades"]:
+        state["upgrades"]["powers_unlocked"] = False
     state["carried_items"] = data["carried_items"]
+    state["floating_loot"] = data.get("floating_loot", [])  # Load floating loot if exists
     state["asteroids"] = [Asteroid.from_dict(a) for a in data["asteroids"]]
     state["player"].rotation = data["player_rotation"]
     state["xp"] = data.get("xp", 0)
@@ -326,13 +434,134 @@ def load_game_state_from_data(data):
     state["quests"] = [Quest.from_dict(q) for q in data.get("quests", [])]
     if not state["quests"]:
         state["quests"] = [Quest(), Quest(), Quest()]
+    state["powers"] = data.get("powers", {"owned": [], "equipped": None, "levels": {}})
+    state["cosmetics"] = data.get("cosmetics", {
+        "unlocked_ships": ["default"],
+        "unlocked_fires": ["default"],
+        "equipped_ship": "default",
+        "equipped_fire": "default",
+    })
+    state["power_shop_materials"] = data.get("power_shop_materials", {"Iron": 0, "Copper": 0, "Titanium": 0, "Uranium": 0, "Power Core": 0})
     return state
+# ==================== SCALING UTILITIES ====================
+def get_screen_center(screen_w, screen_h):
+    """Get center coordinates for current screen"""
+    return screen_w // 2, screen_h // 2
+
+def update_power_effects(game_state, dt, CX, CY):
+    """Update active power effects"""
+    gs = game_state
+    powers = gs["powers"]
+    equipped = powers.get("equipped")
+    
+    if not equipped or equipped not in powers["owned"]:
+        gs["power_effects"] = []
+        return
+    
+    level = powers["levels"].get(equipped, 1)
+    
+    # Damage Orbs
+    if equipped == "damage_orbs":
+        num_orbs = 2 + level  # 3-7 orbs
+        orb_radius = 60 + level * 10
+        orb_speed = 2.0
+        
+        # Initialize orbs if needed
+        if len(gs["power_effects"]) != num_orbs:
+            gs["power_effects"] = []
+            for i in range(num_orbs):
+                angle = (i / num_orbs) * 2 * math.pi
+                gs["power_effects"].append({
+                    "type": "orb",
+                    "angle": angle,
+                    "radius": orb_radius,
+                    "damage": 1 + level * 0.5  # Reduced from 2 + level
+                })
+        
+        # Update orb positions and check collisions
+        for orb in gs["power_effects"]:
+            orb["angle"] += orb_speed * dt
+            orb_x = gs["worldxposition"] + math.cos(orb["angle"]) * orb["radius"]
+            orb_y = gs["worldyposition"] + math.sin(orb["angle"]) * orb["radius"]
+            
+            # Check asteroid collisions
+            for asteroid in gs["asteroids"][:]:
+                dist = math.hypot(asteroid.x - orb_x, asteroid.y - orb_y)
+                if dist < asteroid.radius + 8:
+                    damage = orb["damage"] * dt * 3  # Reduced from 10 to 3
+                    asteroid.health -= damage
+                    if asteroid.health <= 0:
+                        # Destroy asteroid properly
+                        asteroid.health = 0
+    
+    # Auto Aim
+    elif equipped == "auto_aim":
+        gs["power_effects"] = [{"type": "auto_aim", "strength": 0.3 + level * 0.15}]
+    
+    # Magnet - pull loot items toward player
+    elif equipped == "magnet":
+        magnet_range = 150 + level * 50
+        magnet_strength = 200 + level * 100
+        gs["power_effects"] = [{"type": "magnet", "range": magnet_range, "strength": magnet_strength}]
+    
+    # Ultra Fire (handled in shooting code)
+    elif equipped == "ultra_fire":
+        gs["power_effects"] = [{"type": "ultra_fire", "multiplier": 2 + level}]
+    
+    # Piercing Shots
+    elif equipped == "piercing_shots":
+        gs["power_effects"] = [{"type": "piercing", "pierce_count": level}]
+    
+    else:
+        gs["power_effects"] = []
+
+def render_power_effects(screen, game_state, CX, CY, player_rotation):
+    """Render visual effects for active powers"""
+    gs = game_state
+    powers = gs["powers"]
+    equipped = powers.get("equipped")
+    
+    if not equipped:
+        return
+    
+    # Render damage orbs
+    if equipped == "damage_orbs":
+        for orb in gs["power_effects"]:
+            if orb["type"] == "orb":
+                orb_x = gs["worldxposition"] + math.cos(orb["angle"]) * orb["radius"]
+                orb_y = gs["worldyposition"] + math.sin(orb["angle"]) * orb["radius"]
+                screen_x = int(orb_x - gs["worldxposition"] + CX)
+                screen_y = int(orb_y - gs["worldyposition"] + CY)
+                
+                # Draw glowing orb
+                pygame.draw.circle(screen, (255, 150, 50), (screen_x, screen_y), 10)
+                pygame.draw.circle(screen, (255, 200, 100), (screen_x, screen_y), 6)
+                pygame.draw.circle(screen, (255, 255, 150), (screen_x, screen_y), 3)
+    
+    # Render magnet field
+    elif equipped == "magnet":
+        if gs["power_effects"] and gs["power_effects"][0]["type"] == "magnet":
+            magnet_range = gs["power_effects"][0]["range"]
+            magnet_surf = pygame.Surface((magnet_range * 2, magnet_range * 2), pygame.SRCALPHA)
+            pygame.draw.circle(magnet_surf, (255, 255, 100, 30), (magnet_range, magnet_range), magnet_range)
+            pygame.draw.circle(magnet_surf, (255, 255, 150, 60), (magnet_range, magnet_range), magnet_range, 2)
+            screen.blit(magnet_surf, (CX - magnet_range, CY - magnet_range))
+
 # ==================== MAIN GAME ====================
 def main():
     pygame.init()
-    screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
+    
+    # Get display info for fullscreen
+    display_info = pygame.display.Info()
+    SCREEN_W, SCREEN_H = display_info.current_w, display_info.current_h
+    
+    # Create fullscreen display at native resolution
+    screen = pygame.display.set_mode((SCREEN_W, SCREEN_H), pygame.FULLSCREEN)
     pygame.display.set_caption("Asteroid Miner")
     clock = pygame.time.Clock()
+    
+    # Center coordinates
+    CX, CY = SCREEN_W // 2, SCREEN_H // 2
 
     # Load textures and fonts
     asteroid_img = pygame.image.load(os.path.join("textures", "asteroid.png")).convert_alpha()
@@ -361,6 +590,7 @@ def main():
         "Platinum": (200, 200, 255),
         "Uranium": (80, 255, 80),
         "Diamond": (180, 255, 255),
+        "Power Core": (100, 255, 100),
     }
 
     # Game constants
@@ -369,6 +599,11 @@ def main():
     base_x = 200.0
     base_y = 200.0
     base_sell_radius = 120.0
+    
+    # Power shop location (near base)
+    power_shop_x = 400.0
+    power_shop_y = 200.0
+    power_shop_radius = 100.0
     max_asteroids = 28
     spawn_interval = 0.18
 
@@ -380,18 +615,23 @@ def main():
     mp_input_field = 0  # 0 = IP, 1 = Port
     mp_status = ""
     network_update_timer = 0.0
+    
+    # Background asteroids for menu
+    bg_asteroids = []
+    for _ in range(15):
+        bg_asteroids.append({
+            "x": random.randint(0, SCREEN_W),
+            "y": random.randint(0, SCREEN_H),
+            "vx": random.uniform(-50, 50),
+            "vy": random.uniform(-50, 50),
+            "size": random.randint(20, 60),
+            "rotation": random.uniform(0, 360),
+            "rot_speed": random.uniform(-30, 30)
+        })
 
     running = True
 
-    # ==================== MOBILE CONTROLS ====================
-    touch_pos = None
-    touch_down = False
-
-    joystick_center = (120, SCREEN_H - 120)
-    joystick_radius = 90
-
-    fire_button_rect = pygame.Rect(SCREEN_W - 170, SCREEN_H - 170, 140, 140)
-    sell_button_rect = pygame.Rect(SCREEN_W - 170, SCREEN_H - 330, 140, 100)
+    # ==================== MOBILE CONTROLS (REMOVED) ====================
 
 
     while running:
@@ -416,16 +656,16 @@ def main():
                         text_input = ""
                     elif len(text_input) < 20 and event.unicode.isprintable():
                         text_input += event.unicode
+                elif current_state == STATE_POWER_SHOP and event.key == pygame.K_ESCAPE:
+                    current_state = STATE_PLAYING
                 elif current_state == STATE_PLAYING and event.key == pygame.K_ESCAPE:
-                    if network_client.connected:
-                        network_client.disconnect()
-                    if server_process:
-                        server_process.terminate()
-                        server_process = None
-                    if current_world_name and game_state:
-                        save_world(current_world_name, game_state)
-                    current_state = STATE_MENU
-                elif current_state in [STATE_MULTIPLAYER_MENU, STATE_JOIN_GAME, STATE_HOSTING] and event.key == pygame.K_ESCAPE:
+                    current_state = STATE_CONFIRM_EXIT
+                elif current_state == STATE_CONFIRM_EXIT and event.key == pygame.K_ESCAPE:
+                    current_state = STATE_PLAYING
+                elif current_state == STATE_PLAYING and event.key == pygame.K_F11:
+                    # Toggle fullscreen (exit to windowed mode)
+                    running = False
+                elif current_state in [STATE_MULTIPLAYER_MENU, STATE_JOIN_GAME, STATE_HOSTING, STATE_HOST_WORLD_SELECT] and event.key == pygame.K_ESCAPE:
                     if network_client.connected:
                         network_client.disconnect()
                     if server_process:
@@ -444,20 +684,32 @@ def main():
                         selected_world_index = min(selected_world_index, max(0, len(world_list) - 1))
                     elif event.key == pygame.K_ESCAPE:
                         current_state = STATE_MENU
-            # ----- Touch Support -----
-            elif event.type == pygame.FINGERDOWN:
-                touch_down = True
-                touch_pos = (event.x * SCREEN_W, event.y * SCREEN_H)
-
-            elif event.type == pygame.FINGERMOTION:
-                touch_pos = (event.x * SCREEN_W, event.y * SCREEN_H)
-
-            elif event.type == pygame.FINGERUP:
-                touch_down = False
-                touch_pos = None
 
 
         screen.fill((10, 10, 30))
+        
+        # Update and draw background asteroids for menu states
+        if current_state in [STATE_MENU, STATE_NEW_WORLD, STATE_LOAD_WORLD, STATE_SETTINGS, STATE_MULTIPLAYER_MENU, STATE_JOIN_GAME, STATE_HOST_WORLD_SELECT]:
+            for bg_ast in bg_asteroids:
+                bg_ast["x"] += bg_ast["vx"] * dt
+                bg_ast["y"] += bg_ast["vy"] * dt
+                bg_ast["rotation"] += bg_ast["rot_speed"] * dt
+                
+                # Wrap around screen
+                if bg_ast["x"] < -bg_ast["size"]:
+                    bg_ast["x"] = SCREEN_W + bg_ast["size"]
+                elif bg_ast["x"] > SCREEN_W + bg_ast["size"]:
+                    bg_ast["x"] = -bg_ast["size"]
+                if bg_ast["y"] < -bg_ast["size"]:
+                    bg_ast["y"] = SCREEN_H + bg_ast["size"]
+                elif bg_ast["y"] > SCREEN_H + bg_ast["size"]:
+                    bg_ast["y"] = -bg_ast["size"]
+                
+                # Draw asteroid
+                img = pygame.transform.scale(asteroid_img, (bg_ast["size"], bg_ast["size"]))
+                img = pygame.transform.rotate(img, bg_ast["rotation"])
+                img.set_alpha(80)  # Semi-transparent
+                screen.blit(img, (int(bg_ast["x"] - bg_ast["size"]//2), int(bg_ast["y"] - bg_ast["size"]//2)))
 
         # ==================== MENU STATE ====================
         if current_state == STATE_MENU:
@@ -525,10 +777,40 @@ def main():
                     current_world_name = text_input.strip()
                     game_state = create_new_game_state()
                     save_world(current_world_name, game_state)
-                    current_state = STATE_PLAYING
+                    
+                    # Check if we're creating for hosting
+                    if mp_status == "hosting_new":
+                        mp_status = "Starting server..."
+                        try:
+                            server_script = os.path.join(os.path.dirname(__file__), "server.py")
+                            server_process = subprocess.Popen(
+                                [sys.executable, server_script, str(DEFAULT_PORT)],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL
+                            )
+                            import time
+                            time.sleep(0.5)
+                            if network_client.connect("localhost", DEFAULT_PORT, settings["player_name"], settings["ship_color_index"]):
+                                current_state = STATE_PLAYING
+                                mp_status = ""
+                            else:
+                                mp_status = "Failed to connect"
+                                if server_process:
+                                    server_process.terminate()
+                                    server_process = None
+                                current_state = STATE_MULTIPLAYER_MENU
+                        except Exception as e:
+                            mp_status = f"Error: {str(e)[:30]}"
+                            current_state = STATE_MULTIPLAYER_MENU
+                    else:
+                        current_state = STATE_PLAYING
                     text_input = ""
                 elif cancel_btn.is_clicked(mouse_pos, True):
-                    current_state = STATE_MENU
+                    if mp_status == "hosting_new":
+                        current_state = STATE_HOST_WORLD_SELECT
+                        mp_status = ""
+                    else:
+                        current_state = STATE_MENU
                     text_input = ""
 
         # ==================== LOAD WORLD STATE ====================
@@ -663,7 +945,62 @@ def main():
 
             if mouse_clicked:
                 if host_btn.is_clicked(mouse_pos, True):
-                    # Start server and connect
+                    # Go to world selection for hosting
+                    current_state = STATE_HOST_WORLD_SELECT
+                    world_list = get_world_files()
+                    selected_world_index = 0
+                    mp_status = ""
+                elif join_btn.is_clicked(mouse_pos, True):
+                    current_state = STATE_JOIN_GAME
+                    server_ip = "localhost"
+                    server_port = str(DEFAULT_PORT)
+                    mp_input_field = 0
+                elif back_btn.is_clicked(mouse_pos, True):
+                    current_state = STATE_MENU
+
+        # ==================== HOST WORLD SELECT STATE ====================
+        elif current_state == STATE_HOST_WORLD_SELECT:
+            title = title_font.render("SELECT WORLD TO HOST", True, (255, 220, 100))
+            screen.blit(title, (CX - title.get_width() // 2, 100))
+
+            if not world_list:
+                no_worlds = medium_font.render("No saved worlds found.", True, (180, 180, 180))
+                screen.blit(no_worlds, (CX - no_worlds.get_width() // 2, 300))
+            else:
+                list_y = 200
+                for i, world_name in enumerate(world_list):
+                    y = list_y + i * 45
+                    if y > 450:
+                        break
+                    rect = pygame.Rect(CX - 200, y, 400, 40)
+                    if i == selected_world_index:
+                        pygame.draw.rect(screen, (60, 60, 120), rect, border_radius=5)
+                    pygame.draw.rect(screen, (100, 100, 200), rect, 2, border_radius=5)
+                    text = medium_font.render(world_name, True, (255, 255, 255))
+                    screen.blit(text, (rect.x + 15, rect.y + 8))
+
+                    if rect.collidepoint(mouse_pos) and mouse_clicked:
+                        selected_world_index = i
+
+                hint = font.render("UP/DOWN to select, click Host to start server", True, (150, 150, 150))
+                screen.blit(hint, (CX - hint.get_width() // 2, 520))
+
+            # Buttons
+            host_existing_btn = Button(CX - 260, 580, 160, 45, "Host Selected", disabled=len(world_list) == 0)
+            new_world_btn = Button(CX - 80, 580, 160, 45, "New World")
+            back_btn = Button(CX + 100, 580, 160, 45, "Back", color=(120, 60, 60), hover_color=(180, 80, 80))
+            
+            host_existing_btn.draw(screen, font, mouse_pos)
+            new_world_btn.draw(screen, font, mouse_pos)
+            back_btn.draw(screen, font, mouse_pos)
+
+            if mp_status:
+                status_surf = font.render(mp_status, True, (255, 200, 100))
+                screen.blit(status_surf, (CX - status_surf.get_width() // 2, 650))
+
+            if mouse_clicked:
+                if host_existing_btn.is_clicked(mouse_pos, True) and world_list:
+                    # Load selected world and start server
                     mp_status = "Starting server..."
                     try:
                         server_script = os.path.join(os.path.dirname(__file__), "server.py")
@@ -673,10 +1010,11 @@ def main():
                             stderr=subprocess.DEVNULL
                         )
                         import time
-                        time.sleep(0.5)  # Wait for server to start
+                        time.sleep(0.5)
                         if network_client.connect("localhost", DEFAULT_PORT, settings["player_name"], settings["ship_color_index"]):
-                            game_state = create_new_game_state()
-                            current_world_name = "Multiplayer"
+                            current_world_name = world_list[selected_world_index]
+                            data = load_world(current_world_name)
+                            game_state = load_game_state_from_data(data)
                             current_state = STATE_PLAYING
                             mp_status = ""
                         else:
@@ -686,13 +1024,16 @@ def main():
                                 server_process = None
                     except Exception as e:
                         mp_status = f"Error: {str(e)[:30]}"
-                elif join_btn.is_clicked(mouse_pos, True):
-                    current_state = STATE_JOIN_GAME
-                    server_ip = "localhost"
-                    server_port = str(DEFAULT_PORT)
-                    mp_input_field = 0
+                elif new_world_btn.is_clicked(mouse_pos, True):
+                    # Create new world for hosting
+                    current_state = STATE_NEW_WORLD
+                    text_input = ""
+                    text_input_active = True
+                    # Set flag to start server after world creation
+                    mp_status = "hosting_new"
                 elif back_btn.is_clicked(mouse_pos, True):
-                    current_state = STATE_MENU
+                    current_state = STATE_MULTIPLAYER_MENU
+                    mp_status = ""
 
         # ==================== JOIN GAME STATE ====================
         elif current_state == STATE_JOIN_GAME:
@@ -797,23 +1138,13 @@ def main():
             move_x = 0
             move_y = 0
 
-            # ----- KEYBOARD CONTROLS (UNCHANGED) -----
+            # ----- KEYBOARD CONTROLS -----
             if KEY[pygame.K_a]:
                 move_x -= 1
             if KEY[pygame.K_d]:
-              move_x += 1
+                move_x += 1
             if KEY[pygame.K_w]:
-             move_y -= 1
-
-            # ----- TOUCH JOYSTICK -----
-            if touch_down and touch_pos:
-                dx = touch_pos[0] - joystick_center[0]
-                dy = touch_pos[1] - joystick_center[1]
-                dist = math.hypot(dx, dy)
-
-            if dist < joystick_radius:
-                move_x += dx / joystick_radius
-                move_y += dy / joystick_radius
+                move_y -= 1
 
             # Apply rotation
             player.rotation += move_x * rot_speed * dt
@@ -839,21 +1170,57 @@ def main():
             gs["time_since_shot"] += dt
 
             fire_cooldown = max(0.08, 0.8 - 0.08 * upgrades.get("shoot_speed", 0))
-            if KEY[pygame.K_SPACE] and gs["time_since_shot"] >= fire_cooldown:
+            
+            # Ultra Fire power
+            equipped_power = gs["powers"].get("equipped")
+            if equipped_power == "ultra_fire":
+                power_level = gs["powers"]["levels"].get(equipped_power, 0)
+                fire_cooldown = fire_cooldown / (2 + power_level * 1.5)
+            
+            # Check for shooting (keyboard only)
+            should_fire = KEY[pygame.K_SPACE]
+                
+            if should_fire and gs["time_since_shot"] >= fire_cooldown:
                 gs["time_since_shot"] = 0.0
                 nose_offset = 18.0
                 bx = gs["worldxposition"] + fx * nose_offset
                 by = gs["worldyposition"] + fy * nose_offset
                 bvx = fx * bullet_speed + gs["cam_vx"]
                 bvy = fy * bullet_speed + gs["cam_vy"]
-                bullets.append({"x": bx, "y": by, "vx": bvx, "vy": bvy, "life": bullet_life})
+                bullets.append({"x": bx, "y": by, "vx": bvx, "vy": bvy, "life": bullet_life, "pierce_count": 0})
 
             for b in bullets[:]:
+                # Auto-aim
+                if equipped_power == "auto_aim" and gs["power_effects"]:
+                    aim_strength = gs["power_effects"][0].get("strength", 0)
+                    # Find nearest asteroid
+                    nearest_dist = float('inf')
+                    nearest_asteroid = None
+                    for asteroid in asteroids:
+                        dist = math.hypot(asteroid.x - b["x"], asteroid.y - b["y"])
+                        if dist < nearest_dist and dist < 400:  # Only track within range
+                            nearest_dist = dist
+                            nearest_asteroid = asteroid
+                    
+                    if nearest_asteroid:
+                        # Steer bullet towards asteroid
+                        dx = nearest_asteroid.x - b["x"]
+                        dy = nearest_asteroid.y - b["y"]
+                        dist = math.hypot(dx, dy)
+                        if dist > 0:
+                            target_vx = (dx / dist) * bullet_speed
+                            target_vy = (dy / dist) * bullet_speed
+                            b["vx"] += (target_vx - b["vx"]) * aim_strength * dt * 5
+                            b["vy"] += (target_vy - b["vy"]) * aim_strength * dt * 5
+                
                 b["x"] += b["vx"] * dt
                 b["y"] += b["vy"] * dt
                 b["life"] -= dt
                 if b["life"] <= 0:
                     bullets.remove(b)
+
+            # Update power effects
+            update_power_effects(gs, dt, CX, CY)
 
             ship_radius = 14
             for asteroid in asteroids:
@@ -869,6 +1236,12 @@ def main():
                     dot_player = gs["cam_vx"] * nx + gs["cam_vy"] * ny
                     gs["cam_vx"] -= 2 * dot_player * nx
                     gs["cam_vy"] -= 2 * dot_player * ny
+                    
+                    # Push asteroid away to prevent sticking
+                    overlap = (ship_radius + asteroid.radius) - dist
+                    if overlap > 0:
+                        asteroid.x += nx * overlap * 1.2
+                        asteroid.y += ny * overlap * 1.2
 
             for i, a1 in enumerate(asteroids):
                 for j, a2 in enumerate(asteroids):
@@ -934,7 +1307,73 @@ def main():
                 ft["alpha"] -= 120 * dt
                 if ft["alpha"] <= 0 or ft["timer"] > 2.0:
                     floating_texts.remove(ft)
+            
+            # Update floating loot
+            storage_capacity = 5 + 5 * upgrades.get("storage", 0)
+            equipped_power = gs["powers"].get("equipped")
+            magnet_active = equipped_power == "magnet" and gs["power_effects"]
+            magnet_range = gs["power_effects"][0].get("range", 0) if magnet_active else 0
+            magnet_strength = gs["power_effects"][0].get("strength", 0) if magnet_active else 0
+            
+            # Update drop cooldown
+            if gs["drop_cooldown"] > 0:
+                gs["drop_cooldown"] -= dt
+            
+            for loot in gs["floating_loot"][:]:
+                # Apply friction
+                loot["vx"] *= 0.95
+                loot["vy"] *= 0.95
+                
+                # Magnet attraction
+                if magnet_active:
+                    dx = gs["worldxposition"] - loot["x"]
+                    dy = gs["worldyposition"] - loot["y"]
+                    dist = math.hypot(dx, dy)
+                    if dist < magnet_range and dist > 1:
+                        # Pull toward player
+                        pull_force = magnet_strength / (dist + 10)
+                        loot["vx"] += (dx / dist) * pull_force * dt
+                        loot["vy"] += (dy / dist) * pull_force * dt
+                
+                # Update position
+                loot["x"] += loot["vx"] * dt
+                loot["y"] += loot["vy"] * dt
+                loot["lifetime"] -= dt
+                
+                # Check if player picks it up (only if cooldown expired)
+                if gs["drop_cooldown"] <= 0:
+                    dist_to_player = math.hypot(loot["x"] - gs["worldxposition"], loot["y"] - gs["worldyposition"])
+                    if dist_to_player < 30:  # Pickup radius
+                        space = max(0, storage_capacity - len(carried_items))
+                        if space > 0:
+                            carried_items.append({
+                                "mat": loot["mat"],
+                                "rel_angle": math.pi + random.uniform(-0.8, 0.8),
+                                "ang_vel": random.uniform(-1.0, 1.0),
+                                "length": 55 + random.uniform(-10, 15),
+                                "color": loot["color"],
+                            })
+                            gs["floating_loot"].remove(loot)
+                            continue
+                
+                # Remove if expired
+                if loot["lifetime"] <= 0:
+                    gs["floating_loot"].remove(loot)
 
+            # Update coin animations
+            for coin in gs["coin_animations"][:]:
+                coin["progress"] += dt * 2.5  # Animation speed
+                if coin["progress"] >= 1.0:
+                    gs["coin_animations"].remove(coin)
+                    gs["currency_display"] += coin["value"]
+            
+            # Smooth currency display animation
+            if gs["currency_display"] < gs["currency"]:
+                diff = gs["currency"] - gs["currency_display"]
+                gs["currency_display"] += min(diff, diff * 5 * dt)
+            elif gs["currency_display"] > gs["currency"]:
+                gs["currency_display"] = gs["currency"]
+            
             # Multiplayer network updates
             if network_client.connected:
                 network_client.receive()
@@ -950,15 +1389,33 @@ def main():
 
             screen.fill((0, 0, 0))
 
+            # Render power effects (behind everything)
+            render_power_effects(screen, gs, CX, CY, player.rotation)
+
             for ft in floating_texts:
                 sx = int(ft["x"] - gs["worldxposition"] + CX)
                 sy = int(ft["y"] - gs["worldyposition"] + CY)
-                surf = font.render(ft["text"], True, (255, 255, 80))
+                text_color = ft.get("color", (255, 255, 80))
+                surf = font.render(ft["text"], True, text_color)
                 surf.set_alpha(max(0, min(255, int(ft["alpha"]))))
                 screen.blit(surf, (sx, sy))
+            
+            # Render coin animations
+            for coin in gs["coin_animations"]:
+                t = coin["progress"]
+                # Ease out cubic
+                t_eased = 1 - pow(1 - t, 3)
+                x = coin["x"] + (coin["target_x"] - coin["x"]) * t_eased
+                y = coin["y"] + (coin["target_y"] - coin["y"]) * t_eased
+                # Draw coin
+                alpha = int(255 * (1 - t))
+                coin_surf = pygame.Surface((20, 20), pygame.SRCALPHA)
+                pygame.draw.circle(coin_surf, (255, 220, 100, alpha), (10, 10), 10)
+                pygame.draw.circle(coin_surf, (255, 255, 150, alpha), (10, 10), 7)
+                screen.blit(coin_surf, (int(x) - 10, int(y) - 10))
 
             ship_color = SHIP_COLORS[settings["ship_color_index"]][1]
-            cx, cy = 500, 500
+            cx, cy = CX, CY
             size = 14
             pts = [(0, -size), (size * 0.6, size), (-size * 0.6, size)]
             cosr = math.cos(player.rotation)
@@ -1058,8 +1515,31 @@ def main():
 
             bx_scr = int(base_x - gs["worldxposition"] + CX)
             by_scr = int(base_y - gs["worldyposition"] + CY)
-            base_size = 24
-            pygame.draw.rect(screen, (100, 100, 255), (bx_scr - base_size//2, by_scr - base_size//2, base_size, base_size), 2)
+            base_size = 28
+            # Draw base with same style as power shop
+            pygame.draw.rect(screen, (80, 100, 255), (bx_scr - base_size//2, by_scr - base_size//2, base_size, base_size), 0, border_radius=5)
+            pygame.draw.rect(screen, (150, 180, 255), (bx_scr - base_size//2, by_scr - base_size//2, base_size, base_size), 3, border_radius=5)
+            # Add glow effect
+            glow_surf = pygame.Surface((base_size + 20, base_size + 20), pygame.SRCALPHA)
+            pygame.draw.rect(glow_surf, (150, 180, 255, 50), (0, 0, base_size + 20, base_size + 20), border_radius=10)
+            screen.blit(glow_surf, (bx_scr - base_size//2 - 10, by_scr - base_size//2 - 10))
+            base_label = font.render("BASE", True, (150, 180, 255))
+            screen.blit(base_label, (bx_scr - base_label.get_width()//2, by_scr - 45))
+            
+            # Draw power shop structure
+            if upgrades.get("powers_unlocked", False):
+                psx_scr = int(power_shop_x - gs["worldxposition"] + CX)
+                psy_scr = int(power_shop_y - gs["worldyposition"] + CY)
+                ps_size = 28
+                # Draw purple/pink structure
+                pygame.draw.rect(screen, (180, 80, 255), (psx_scr - ps_size//2, psy_scr - ps_size//2, ps_size, ps_size), 0, border_radius=5)
+                pygame.draw.rect(screen, (255, 150, 255), (psx_scr - ps_size//2, psy_scr - ps_size//2, ps_size, ps_size), 3, border_radius=5)
+                # Add glow effect
+                glow_surf = pygame.Surface((ps_size + 20, ps_size + 20), pygame.SRCALPHA)
+                pygame.draw.rect(glow_surf, (255, 150, 255, 50), (0, 0, ps_size + 20, ps_size + 20), border_radius=10)
+                screen.blit(glow_surf, (psx_scr - ps_size//2 - 10, psy_scr - ps_size//2 - 10))
+                ps_label = font.render("POWER SHOP", True, (255, 150, 255))
+                screen.blit(ps_label, (psx_scr - ps_label.get_width()//2, psy_scr - 45))
 
             if not (0 <= bx_scr <= SCREEN_W and 0 <= by_scr <= SCREEN_H):
                 dir_x = bx_scr - CX
@@ -1087,12 +1567,15 @@ def main():
                 size = asteroid.radius * 2
                 img = pygame.transform.smoothscale(asteroid_img, (size, size))
                 
-                # Golden asteroid tint
+                # Golden asteroid tint - better visual
                 if asteroid.golden:
-                    gold_tint = pygame.Surface((size, size), pygame.SRCALPHA)
-                    gold_tint.fill((255, 215, 0, 60))
-                    img = img.copy()
-                    img.blit(gold_tint, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
+                    # Create a circular gold overlay instead of square
+                    gold_overlay = pygame.Surface((size, size), pygame.SRCALPHA)
+                    center = size // 2
+                    for r in range(asteroid.radius, 0, -2):
+                        alpha = int(80 * (r / asteroid.radius))
+                        pygame.draw.circle(gold_overlay, (255, 215, 0, alpha), (center, center), r)
+                    img.blit(gold_overlay, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
                 
                 screen.blit(img, (ax - asteroid.radius, ay - asteroid.radius))
                 
@@ -1124,10 +1607,50 @@ def main():
                     if math.hypot(ddx, ddy) < asteroid.radius + 6:
                         damage = 1 + upgrades.get("shot_damage", 0)
                         asteroid.health -= damage
-                        try:
-                            bullets.remove(b)
-                        except ValueError:
-                            pass
+                        
+                        # Power effects on hit
+                        equipped_power = gs["powers"].get("equipped")
+                        power_level = gs["powers"]["levels"].get(equipped_power, 0)
+                        
+                        # Bullet Split
+                        if equipped_power == "bullet_split":
+                            num_splits = 1 + power_level
+                            for _ in range(num_splits):
+                                angle = random.uniform(0, 2 * math.pi)
+                                split_speed = bullet_speed * 0.7
+                                bullets.append({
+                                    "x": asteroid.x,
+                                    "y": asteroid.y,
+                                    "vx": math.cos(angle) * split_speed,
+                                    "vy": math.sin(angle) * split_speed,
+                                    "life": bullet_life * 0.5,
+                                    "pierce_count": 0
+                                })
+                        
+                        # Explosive Shots
+                        if equipped_power == "explosive_shots":
+                            explosion_radius = 50 + power_level * 20
+                            explosion_damage = 2 + power_level
+                            for other_asteroid in asteroids:
+                                if other_asteroid != asteroid:
+                                    dist_to_explosion = math.hypot(other_asteroid.x - asteroid.x, other_asteroid.y - asteroid.y)
+                                    if dist_to_explosion < explosion_radius:
+                                        other_asteroid.health -= explosion_damage
+                        
+                        # Piercing - only remove bullet if it's out of pierces
+                        should_remove = True
+                        if equipped_power == "piercing_shots":
+                            max_pierce = power_level
+                            if b.get("pierce_count", 0) < max_pierce:
+                                b["pierce_count"] = b.get("pierce_count", 0) + 1
+                                should_remove = False
+                        
+                        if should_remove:
+                            try:
+                                bullets.remove(b)
+                            except ValueError:
+                                pass
+                        
                         if asteroid.health <= 0:
                             try:
                                 asteroids.remove(asteroid)
@@ -1159,21 +1682,42 @@ def main():
                                 for mat, prob in loot_table_biased:
                                     acc += prob
                                     if r <= acc:
-                                        space = max(0, storage_capacity - len(carried_items))
-                                        if space > 0:
-                                            carried_items.append({
-                                                "mat": mat,
-                                                "rel_angle": math.pi + random.uniform(-0.8, 0.8),
-                                                "ang_vel": random.uniform(-1.0, 1.0),
-                                                "length": 55 + random.uniform(-10, 15),
-                                                "color": list(color_map.get(mat, (255, 255, 255))),
-                                            })
-                                            loot_counter[mat] = loot_counter.get(mat, 0) + 1
+                                        # Create floating loot instead of directly adding to inventory
+                                        angle = random.uniform(0, 2*math.pi)
+                                        speed = random.uniform(40, 80)
+                                        gs["floating_loot"].append({
+                                            "mat": mat,
+                                            "x": asteroid.x,
+                                            "y": asteroid.y,
+                                            "vx": math.cos(angle) * speed,
+                                            "vy": math.sin(angle) * speed,
+                                            "color": list(color_map.get(mat, (255, 255, 255))),
+                                            "lifetime": 15.0  # Loot disappears after 15 seconds
+                                        })
+                                        loot_counter[mat] = loot_counter.get(mat, 0) + 1
                                         break
+                            
+                            # Power cores from golden asteroids
+                            if asteroid.golden and random.random() < 0.3:  # 30% chance from golden
+                                angle = random.uniform(0, 2*math.pi)
+                                speed = random.uniform(40, 80)
+                                gs["floating_loot"].append({
+                                    "mat": "Power Core",
+                                    "x": asteroid.x,
+                                    "y": asteroid.y,
+                                    "vx": math.cos(angle) * speed,
+                                    "vy": math.sin(angle) * speed,
+                                    "color": [100, 255, 100],  # Green
+                                    "lifetime": 15.0
+                                })
+                                loot_counter["Power Core"] = loot_counter.get("Power Core", 0) + 1
+                            
                             for mat, count in loot_counter.items():
                                 for _ in range(count):
                                     angle = random.uniform(0, 2*math.pi)
                                     speed = random.uniform(30, 70)
+                                    # Green text for power cores
+                                    text_color = (100, 255, 100) if mat == "Power Core" else (255, 255, 80)
                                     floating_texts.append({
                                         "text": f"+1 {mat}",
                                         "x": asteroid.x,
@@ -1181,71 +1725,151 @@ def main():
                                         "dx": math.cos(angle)*speed,
                                         "dy": math.sin(angle)*speed,
                                         "alpha": 255,
-                                        "timer": 0.0
+                                        "timer": 0.0,
+                                        "color": text_color
                                     })
 
             gs["spawn_timer"] += dt
             if gs["spawn_timer"] >= spawn_interval:
                 gs["spawn_timer"] = 0.0
                 if len(asteroids) < max_asteroids:
+                    # Spawn outside camera view
                     ang = random.random() * 2 * math.pi
-                    dist = random.randint(250, 600)
-                    rx = gs["worldxposition"] + math.cos(ang) * dist
-                    ry = gs["worldyposition"] + math.sin(ang) * dist
+                    # Spawn at edge of screen + some distance
+                    spawn_distance = max(SCREEN_W, SCREEN_H) // 2 + random.randint(100, 300)
+                    rx = gs["worldxposition"] + math.cos(ang) * spawn_distance
+                    ry = gs["worldyposition"] + math.sin(ang) * spawn_distance
                     base_dist = math.hypot(rx - base_x, ry - base_y)
-                    spawn_chance = max(0.08, 1.0 * math.exp(-base_dist / 3500))
+                    # Increased spawn chance at far distances
+                    spawn_chance = max(0.15, 1.0 * math.exp(-base_dist / 4500))
+                    if base_dist > 3000:
+                        spawn_chance = min(0.95, spawn_chance * 1.5)  # Much higher chance far away
                     if random.random() <= spawn_chance:
-                        boss_prob = 0.05
-                        is_boss = random.random() < boss_prob and base_dist > 3000
-                        if base_dist < 3000:
-                            size_scale = 1.0
-                        elif base_dist < 6000:
-                            size_scale = 2.0
-                        elif base_dist < 12000:
-                            size_scale = 4.0
-                        else:
-                            size_scale = 8.0
-                        boss_health = int(40 * size_scale) if is_boss else None
-                        asteroids.append(Asteroid(rx, ry, random.uniform(-30, 30), random.uniform(-30, 30), health=boss_health, boss=is_boss))
+                        # Incremental scaling based on distance
+                        # Size scales from 1.0 at base to higher values far away
+                        size_scale = 1.0 + (base_dist / 2000.0)  # Gradual increase
+                        size_scale = min(size_scale, 10.0)  # Cap at 10x
+                        
+                        # Boss probability increases with distance
+                        boss_prob = min(0.15, 0.02 + (base_dist / 20000.0))
+                        is_boss = random.random() < boss_prob and base_dist > 2000
+                        
+                        # Calculate health based on size scale
                         if is_boss:
-                            asteroids[-1].radius = int(32 * size_scale)
+                            base_health = 40
+                            health = int(base_health * size_scale * random.uniform(0.8, 1.2))
                         else:
-                            asteroids[-1].radius = int(8 * size_scale)
+                            base_health = random.randint(6, 18)
+                            health = int(base_health * size_scale * random.uniform(0.9, 1.1))
+                        
+                        # Calculate radius based on size scale
+                        if is_boss:
+                            radius = int((32 + base_dist / 200) * random.uniform(0.9, 1.1))
+                        else:
+                            radius = int((8 + base_dist / 400) * random.uniform(0.9, 1.1))
+                        
+                        radius = max(8, min(radius, 80))  # Clamp between 8 and 80
+                        
+                        asteroids.append(Asteroid(rx, ry, random.uniform(-30, 30), random.uniform(-30, 30), health=health, boss=is_boss))
+                        asteroids[-1].radius = radius
+                        asteroids[-1].max_health = health
 
             speed = math.hypot(gs["cam_vx"], gs["cam_vy"])
             sx = int(gs["cam_vx"] * 0.05)
             sy = int(gs["cam_vy"] * 0.05)
-            cx, cy = 500, 500
+            cx, cy = CX, CY
             pygame.draw.line(screen, (0, 255, 0), (cx, cy), (cx + sx, cy + sy), 3)
 
             for b in bullets:
                 bx_scr = int(b["x"] - gs["worldxposition"] + CX)
                 by_scr = int(b["y"] - gs["worldyposition"] + CY)
                 pygame.draw.circle(screen, (255, 220, 0), (bx_scr, by_scr), 3)
+            
+            # Draw floating loot
+            for loot in gs["floating_loot"]:
+                lx_scr = int(loot["x"] - gs["worldxposition"] + CX)
+                ly_scr = int(loot["y"] - gs["worldyposition"] + CY)
+                # Draw loot with pulsing effect
+                pulse = 1.0 + 0.2 * math.sin(pygame.time.get_ticks() / 200.0)
+                radius = int(8 * pulse)
+                pygame.draw.circle(screen, tuple(loot["color"]), (lx_scr, ly_scr), radius)
+                pygame.draw.circle(screen, (255, 255, 255), (lx_scr, ly_scr), radius, 2)
+                # Draw glow
+                glow_surf = pygame.Surface((radius * 4, radius * 4), pygame.SRCALPHA)
+                pygame.draw.circle(glow_surf, (*loot["color"], 60), (radius * 2, radius * 2), radius * 2)
+                screen.blit(glow_surf, (lx_scr - radius * 2, ly_scr - radius * 2))
 
-            cx, cy = 500, 500
-            for item in carried_items:
+            cx, cy = CX, CY
+            for i, item in enumerate(carried_items):
                 world_angle = player.rotation + item["rel_angle"]
                 ix = cx + int(math.sin(world_angle) * item["length"])
                 iy = cy + int(-math.cos(world_angle) * item["length"])
                 pygame.draw.line(screen, (120, 120, 120), (cx, cy), (ix, iy), 2)
                 pygame.draw.circle(screen, tuple(item["color"]), (ix, iy), 6)
+                
+                # Show resource name on hover and allow dropping by clicking
+                if math.hypot(mouse_pos[0] - ix, mouse_pos[1] - iy) < 15:
+                    name_surf = font.render(f"{item['mat']} (Click to drop)", True, (255, 255, 255))
+                    name_bg = pygame.Rect(mouse_pos[0] + 15, mouse_pos[1] - 10, name_surf.get_width() + 8, name_surf.get_height() + 4)
+                    pygame.draw.rect(screen, (40, 40, 60), name_bg, border_radius=4)
+                    pygame.draw.rect(screen, (200, 200, 255), name_bg, 1, border_radius=4)
+                    screen.blit(name_surf, (mouse_pos[0] + 19, mouse_pos[1] - 8))
+                    
+                    # Drop resource on click
+                    if mouse_clicked:
+                        # Create floating loot at player position
+                        angle = random.uniform(0, 2*math.pi)
+                        speed = random.uniform(100, 150)  # Faster throw speed
+                        gs["floating_loot"].append({
+                            "mat": item["mat"],
+                            "x": gs["worldxposition"],
+                            "y": gs["worldyposition"],
+                            "vx": math.cos(angle) * speed,
+                            "vy": math.sin(angle) * speed,
+                            "color": item["color"],
+                            "lifetime": 15.0
+                        })
+                        carried_items.pop(i)
+                        gs["drop_cooldown"] = 1.0  # 1 second cooldown before pickup
+                        break  # Only drop one per click
 
             storage_capacity = 5 + 5 * upgrades.get("storage", 0)
             storage_used = len(carried_items)
-            screen.blit(font.render(f"Speed: {speed:.1f}", True, (255, 255, 255)), (10, 10))
-            screen.blit(font.render(f"Cargo: {storage_used}/{storage_capacity}", True, (255, 255, 255)), (10, 36))
-            screen.blit(font.render(f"Coins: ${gs['currency']:.2f}", True, (255, 220, 100)), (10, 56))
-            screen.blit(font.render(f"World: {current_world_name}", True, (180, 180, 255)), (10, 76))
-            screen.blit(font.render(f"{settings['player_name']}", True, (200, 255, 200)), (10, 96))
-            screen.blit(font.render("ESC = Save & Menu", True, (150, 150, 150)), (10, SCREEN_H - 30))
-
+            
+            # Top right - Money display (big and visible with decimals)
+            money_font = pygame.font.SysFont(None, 48)
+            money_text = money_font.render(f"${gs['currency_display']:.2f}", True, (255, 220, 100))
+            money_bg = pygame.Rect(SCREEN_W - money_text.get_width() - 30, 10, money_text.get_width() + 20, money_text.get_height() + 10)
+            pygame.draw.rect(screen, (40, 40, 60, 200), money_bg, border_radius=8)
+            pygame.draw.rect(screen, (255, 220, 100), money_bg, 2, border_radius=8)
+            screen.blit(money_text, (SCREEN_W - money_text.get_width() - 20, 15))
+            
+            # Top left - Speed and Storage (styled like money)
+            info_font = pygame.font.SysFont(None, 36)
+            speed_text = info_font.render(f"Speed: {speed:.0f}", True, (100, 255, 255))
+            speed_bg = pygame.Rect(15, 15, speed_text.get_width() + 20, speed_text.get_height() + 8)
+            pygame.draw.rect(screen, (30, 40, 50, 200), speed_bg, border_radius=6)
+            pygame.draw.rect(screen, (100, 255, 255), speed_bg, 2, border_radius=6)
+            screen.blit(speed_text, (25, 19))
+            
+            cargo_text = info_font.render(f"Cargo: {storage_used}/{storage_capacity}", True, (255, 180, 100))
+            cargo_bg = pygame.Rect(15, 70, cargo_text.get_width() + 20, cargo_text.get_height() + 8)
+            pygame.draw.rect(screen, (30, 40, 50, 200), cargo_bg, border_radius=6)
+            pygame.draw.rect(screen, (255, 180, 100), cargo_bg, 2, border_radius=6)
+            screen.blit(cargo_text, (25, 74))
+            
+            screen.blit(font.render("ESC = Menu", True, (150, 150, 150)), (10, SCREEN_H - 30))
+            
             pdist = math.hypot(gs["worldxposition"] - base_x, gs["worldyposition"] - base_y)
             if pdist <= base_sell_radius:
                 sell_text = font.render("At base: E = sell, click upgrade below", True, (180, 180, 255))
                 screen.blit(sell_text, (SCREEN_W//2 - 160, 10))
 
-                upg_costs = [10 * (2.8 ** upgrades[k]) for k in ["speed", "storage", "shot_damage", "shoot_speed"]]
+                # Different base costs and multipliers for each upgrade
+                upg_keys = ["speed", "storage", "shot_damage", "shoot_speed"]
+                base_costs = [8, 12, 20, 15]  # speed cheapest, damage most expensive
+                multipliers = [2.5, 2.8, 3.2, 2.9]
+                upg_costs = [base_costs[i] * (multipliers[i] ** upgrades[upg_keys[i]]) for i in range(4)]
                 upg_names = ["Speed", "Storage", "Damage", "Shooting Speed"]
                 upg_descs = ["Move faster", "Carry more cargo", "Deal more damage", "Shoot faster"]
                 button_w = 210
@@ -1275,16 +1899,252 @@ def main():
                         gs["currency"] -= upg_costs[i]
                         upgrades[list(upgrades.keys())[i]] += 1
 
+                # Powers unlock (only at base) - with drop zone
+                if not upgrades.get("powers_unlocked", False):
+                    powers_btn_y = base_y_btn - 180
+                    powers_btn_rect = pygame.Rect(SCREEN_W//2 - 250, powers_btn_y, 500, 150)
+                    
+                    # Required materials
+                    required_mats = {"Iron": 10, "Copper": 5, "Titanium": 3, "Uranium": 2, "Power Core": 1}
+                    stored_mats = gs["power_shop_materials"]
+                    
+                    has_all = all(stored_mats.get(mat, 0) >= qty for mat, qty in required_mats.items())
+                    
+                    powers_color = (100, 40, 120) if not has_all else (180, 80, 255)
+                    if powers_btn_rect.collidepoint(mouse_pos):
+                        powers_color = (220, 120, 255) if has_all else (120, 50, 140)
+                    pygame.draw.rect(screen, powers_color, powers_btn_rect, border_radius=12)
+                    pygame.draw.rect(screen, (255, 150, 255), powers_btn_rect, 3, border_radius=12)
+                    powers_title = medium_font.render("BUILD POWER SHOP", True, (255, 255, 255))
+                    screen.blit(powers_title, (powers_btn_rect.centerx - powers_title.get_width()//2, powers_btn_rect.y + 10))
+                    
+                    drop_text = font.render("Drop materials here (click on carried items)", True, (200, 200, 200))
+                    screen.blit(drop_text, (powers_btn_rect.centerx - drop_text.get_width()//2, powers_btn_rect.y + 45))
+                    
+                    # Show requirements in rows
+                    y_offset = powers_btn_rect.y + 75
+                    row1 = [("Iron", 10), ("Copper", 5), ("Titanium", 3)]
+                    row2 = [("Uranium", 2), ("Power Core", 1)]
+                    
+                    for row_idx, row in enumerate([row1, row2]):
+                        x_offset = powers_btn_rect.centerx - (len(row) * 90) // 2
+                        for mat, qty in row:
+                            have = stored_mats.get(mat, 0)
+                            color = (100, 255, 100) if have >= qty else (255, 100, 100)
+                            req_surf = font.render(f"{mat}: {have}/{qty}", True, color)
+                            screen.blit(req_surf, (x_offset, y_offset + row_idx * 25))
+                            x_offset += 90
+                    
+                    # Check if items are dropped in the zone
+                    for i, item in enumerate(carried_items[:]):
+                        world_angle = player.rotation + item["rel_angle"]
+                        ix = CX + int(math.sin(world_angle) * item["length"])
+                        iy = CY + int(-math.cos(world_angle) * item["length"])
+                        
+                        if powers_btn_rect.collidepoint(ix, iy) and mouse_clicked:
+                            if item["mat"] in required_mats:
+                                stored_mats[item["mat"]] = stored_mats.get(item["mat"], 0) + 1
+                                carried_items.pop(i)
+                                break
+                    
+                    if powers_btn_rect.collidepoint(mouse_pos) and mouse_clicked and has_all:
+                        # Clear stored materials
+                        for mat in required_mats:
+                            stored_mats[mat] = 0
+                        upgrades["powers_unlocked"] = True
+
                 if KEY[pygame.K_e] and carried_items:
-                    prices = {"Iron": 1.0, "Copper": 2.0, "Gold": 4.0, "Titanium": 6.0, "Platinum": 8.0, "Uranium": 10.0, "Diamond": 14.0}
+                    prices = {"Iron": 1.0, "Copper": 2.0, "Gold": 4.0, "Titanium": 6.0, "Platinum": 8.0, "Uranium": 10.0, "Diamond": 14.0, "Power Core": 0}
                     counts = {}
+                    # Create coin animations for each item
                     for it in carried_items:
                         counts[it["mat"]] = counts.get(it["mat"], 0) + 1
+                        # Create coin animation
+                        angle = random.uniform(0, 2*math.pi)
+                        gs["coin_animations"].append({
+                            "x": CX,
+                            "y": CY,
+                            "target_x": SCREEN_W - 100,
+                            "target_y": 40,
+                            "progress": 0.0,
+                            "value": prices.get(it["mat"], 0)
+                        })
                     total = 0.0
                     for mat, qty in counts.items():
                         total += prices.get(mat, 0) * qty
                     carried_items.clear()
                     gs["currency"] += round(total, 2)
+            
+            # Check if at power shop
+            if upgrades.get("powers_unlocked", False):
+                ps_dist = math.hypot(gs["worldxposition"] - power_shop_x, gs["worldyposition"] - power_shop_y)
+                if ps_dist <= power_shop_radius:
+                    ps_text = font.render("At Power Shop: Press P to enter", True, (255, 150, 255))
+                    screen.blit(ps_text, (SCREEN_W//2 - ps_text.get_width()//2, 40))
+                    
+                    if KEY[pygame.K_p]:
+                        current_state = STATE_POWER_SHOP
+
+        # ==================== CONFIRM EXIT STATE ====================
+        elif current_state == STATE_CONFIRM_EXIT and game_state:
+            # Dim the game screen
+            dim_surf = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+            dim_surf.fill((0, 0, 0, 180))
+            screen.blit(dim_surf, (0, 0))
+            
+            # Confirmation dialog
+            dialog_w, dialog_h = 500, 250
+            dialog_rect = pygame.Rect(CX - dialog_w//2, CY - dialog_h//2, dialog_w, dialog_h)
+            pygame.draw.rect(screen, (40, 40, 60), dialog_rect, border_radius=12)
+            pygame.draw.rect(screen, (200, 200, 255), dialog_rect, 3, border_radius=12)
+            
+            title_text = medium_font.render("Save and Exit?", True, (255, 255, 255))
+            screen.blit(title_text, (CX - title_text.get_width()//2, CY - 80))
+            
+            info_text = font.render("Your progress will be saved", True, (200, 200, 200))
+            screen.blit(info_text, (CX - info_text.get_width()//2, CY - 30))
+            
+            # Buttons
+            yes_btn = Button(CX - 130, CY + 40, 120, 50, "Yes", color=(80, 180, 80), hover_color=(120, 220, 120))
+            no_btn = Button(CX + 10, CY + 40, 120, 50, "No", color=(180, 80, 80), hover_color=(220, 120, 120))
+            
+            yes_btn.draw(screen, font, mouse_pos)
+            no_btn.draw(screen, font, mouse_pos)
+            
+            if mouse_clicked:
+                if yes_btn.is_clicked(mouse_pos, True):
+                    if network_client.connected:
+                        network_client.disconnect()
+                    if server_process:
+                        server_process.terminate()
+                        server_process = None
+                    if current_world_name and game_state:
+                        save_world(current_world_name, game_state)
+                    current_state = STATE_MENU
+                elif no_btn.is_clicked(mouse_pos, True):
+                    current_state = STATE_PLAYING
+
+        # ==================== POWER SHOP STATE ====================
+        elif current_state == STATE_POWER_SHOP and game_state:
+            gs = game_state
+            powers = gs["powers"]
+            
+            title = title_font.render("SUPERPOWER SHOP", True, (255, 150, 255))
+            screen.blit(title, (CX - title.get_width() // 2, 50))
+            
+            coins_text = medium_font.render(f"Coins: ${gs['currency']:.2f}", True, (255, 220, 100))
+            screen.blit(coins_text, (CX - coins_text.get_width() // 2, 120))
+            
+            # Display powers in a grid
+            powers_per_row = 3
+            power_w, power_h = 280, 180
+            gap = 20
+            start_y = 180
+            
+            power_list = list(SUPERPOWERS.items())
+            for idx, (power_id, power_data) in enumerate(power_list):
+                row = idx // powers_per_row
+                col = idx % powers_per_row
+                
+                total_row_width = powers_per_row * power_w + (powers_per_row - 1) * gap
+                start_x = (SCREEN_W - total_row_width) // 2
+                
+                px = start_x + col * (power_w + gap)
+                py = start_y + row * (power_h + gap)
+                
+                rect = pygame.Rect(px, py, power_w, power_h)
+                
+                owned = power_id in powers["owned"]
+                equipped = powers["equipped"] == power_id
+                level = powers["levels"].get(power_id, 0)
+                max_level = power_data["max_level"]
+                
+                # Determine color
+                if equipped:
+                    color = (80, 255, 120)
+                elif owned:
+                    color = (80, 180, 255)
+                else:
+                    color = (60, 60, 120)
+                
+                if rect.collidepoint(mouse_pos):
+                    color = tuple(min(255, c + 40) for c in color)
+                
+                pygame.draw.rect(screen, color, rect, border_radius=10)
+                pygame.draw.rect(screen, (200, 200, 255), rect, 2, border_radius=10)
+                
+                # Power name
+                name_surf = font.render(power_data["name"], True, (255, 255, 255))
+                screen.blit(name_surf, (px + 10, py + 10))
+                
+                # Description
+                desc_surf = font.render(power_data["description"], True, (200, 200, 200))
+                screen.blit(desc_surf, (px + 10, py + 35))
+                
+                # Level/Cost info
+                if owned:
+                    level_surf = font.render(f"Level: {level}/{max_level}", True, (255, 255, 100))
+                    screen.blit(level_surf, (px + 10, py + 60))
+                    
+                    if level < max_level:
+                        upgrade_cost = int(power_data["base_cost"] * (power_data["upgrade_cost_mult"] ** level))
+                        cost_surf = font.render(f"Upgrade: ${upgrade_cost}", True, (255, 255, 0) if gs["currency"] >= upgrade_cost else (180, 100, 100))
+                        screen.blit(cost_surf, (px + 10, py + 85))
+                    else:
+                        max_surf = font.render("MAX LEVEL", True, (100, 255, 100))
+                        screen.blit(max_surf, (px + 10, py + 85))
+                    
+                    # Equip button
+                    if not equipped:
+                        equip_btn = pygame.Rect(px + 10, py + 115, 120, 50)
+                        equip_color = (100, 200, 100) if equip_btn.collidepoint(mouse_pos) else (60, 150, 60)
+                        pygame.draw.rect(screen, equip_color, equip_btn, border_radius=8)
+                        equip_text = font.render("EQUIP", True, (255, 255, 255))
+                        screen.blit(equip_text, (equip_btn.centerx - equip_text.get_width()//2, equip_btn.centery - equip_text.get_height()//2))
+                        
+                        if equip_btn.collidepoint(mouse_pos) and mouse_clicked:
+                            powers["equipped"] = power_id
+                    else:
+                        equipped_surf = font.render("EQUIPPED", True, (100, 255, 100))
+                        screen.blit(equipped_surf, (px + 10, py + 130))
+                    
+                    # Upgrade button
+                    if level < max_level:
+                        upgrade_btn = pygame.Rect(px + 150, py + 115, 120, 50)
+                        upgrade_cost = int(power_data["base_cost"] * (power_data["upgrade_cost_mult"] ** level))
+                        can_afford = gs["currency"] >= upgrade_cost
+                        upgrade_color = (200, 150, 50) if upgrade_btn.collidepoint(mouse_pos) and can_afford else (120, 90, 30) if can_afford else (60, 60, 60)
+                        pygame.draw.rect(screen, upgrade_color, upgrade_btn, border_radius=8)
+                        upgrade_text = font.render("UPGRADE", True, (255, 255, 255) if can_afford else (120, 120, 120))
+                        screen.blit(upgrade_text, (upgrade_btn.centerx - upgrade_text.get_width()//2, upgrade_btn.centery - upgrade_text.get_height()//2))
+                        
+                        if upgrade_btn.collidepoint(mouse_pos) and mouse_clicked and can_afford:
+                            gs["currency"] -= upgrade_cost
+                            powers["levels"][power_id] += 1
+                else:
+                    # Buy button
+                    buy_cost = power_data["base_cost"]
+                    cost_surf = font.render(f"Cost: ${buy_cost}", True, (255, 255, 0) if gs["currency"] >= buy_cost else (180, 100, 100))
+                    screen.blit(cost_surf, (px + 10, py + 60))
+                    
+                    buy_btn = pygame.Rect(px + 10, py + 115, 260, 50)
+                    can_afford = gs["currency"] >= buy_cost
+                    buy_color = (180, 80, 255) if buy_btn.collidepoint(mouse_pos) and can_afford else (120, 50, 180) if can_afford else (60, 60, 60)
+                    pygame.draw.rect(screen, buy_color, buy_btn, border_radius=8)
+                    buy_text = medium_font.render("BUY POWER", True, (255, 255, 255) if can_afford else (120, 120, 120))
+                    screen.blit(buy_text, (buy_btn.centerx - buy_text.get_width()//2, buy_btn.centery - buy_text.get_height()//2))
+                    
+                    if buy_btn.collidepoint(mouse_pos) and mouse_clicked and can_afford:
+                        gs["currency"] -= buy_cost
+                        powers["owned"].append(power_id)
+                        powers["levels"][power_id] = 1
+            
+            # Back button
+            back_btn = Button(CX - 100, SCREEN_H - 80, 200, 50, "Back to Game", color=(120, 60, 60), hover_color=(180, 80, 80))
+            back_btn.draw(screen, font, mouse_pos)
+            
+            if back_btn.is_clicked(mouse_pos, mouse_clicked):
+                current_state = STATE_PLAYING
 
         pygame.display.flip()
 
